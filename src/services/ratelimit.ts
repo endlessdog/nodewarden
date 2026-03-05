@@ -300,34 +300,22 @@ function normalizeClientIpForRateLimit(rawIp: string): string | null {
 }
 
 export function getClientIdentifier(request: Request): string | null {
-  const cfIp = request.headers.get('CF-Connecting-IP');
-  if (cfIp) {
-    return normalizeClientIpForRateLimit(cfIp);
+  // Strict fallback order:
+  // 1) CF-Connecting-IP
+  // 2) X-Real-IP
+  // 3) first item of X-Forwarded-For
+  // If none are present/valid, treat client IP as unavailable.
+  const candidates: Array<string | null> = [
+    request.headers.get('CF-Connecting-IP'),
+    request.headers.get('X-Real-IP'),
+    request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() || null,
+  ];
+
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const normalized = normalizeClientIpForRateLimit(raw);
+    if (normalized) return normalized;
   }
 
-  // Local development fallback:
-  // wrangler dev may not provide CF-Connecting-IP. Allow localhost requests
-  // to resolve an identifier from X-Forwarded-For or loopback.
-  try {
-    const hostname = new URL(request.url).hostname.toLowerCase();
-    const isLocalHost =
-      hostname === 'localhost' ||
-      hostname === '127.0.0.1' ||
-      hostname === '::1' ||
-      hostname === '[::1]';
-    if (!isLocalHost) {
-      return null;
-    }
-
-    const forwardedFor = request.headers.get('X-Forwarded-For');
-    if (forwardedFor) {
-      const first = forwardedFor.split(',')[0].trim();
-      const normalized = normalizeClientIpForRateLimit(first);
-      if (normalized) return normalized;
-    }
-
-    return 'ip4:127.0.0.1';
-  } catch {
-    return null;
-  }
+  return null;
 }
